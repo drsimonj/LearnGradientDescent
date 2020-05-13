@@ -1,0 +1,430 @@
+---
+title: "Learn Gradient Descent with code"
+output: html_document
+---
+
+```{r knit_setup}
+knitr::opts_chunk$set(
+  comment = "#>",
+  fig.path = "temp/"
+)
+```
+```{r setup_packages}
+# Will be making heavy use of the tidyverse
+library(tidyverse)
+library(broom)
+library(glue)
+```
+```{r setup_plots}
+# Set default theme as minimal
+theme_set(theme_minimal())
+```
+```{r}
+# Set a seed to make the analysis reproducible
+set.seed(20200514)
+```
+
+# Getting the concept
+
+```{r}
+# Tiny sample data set
+d <- tibble(x = c(0, 1, 2),
+            y = c(1, 3, 10))
+```
+```{r some_data}
+ggplot(d, aes(x, y)) +
+  geom_point(size = 3) +
+  ggtitle("Some data (doesn't get much simpler)") +
+  labs(x = "x (e.g., bid amount)", y = "y (e.g., ROI)") +
+  scale_y_continuous(limits = c(0, max(d$y)))
+```
+
+```{r}
+model <- lm(y ~ x, d) %>% tidy()
+model
+```
+```{r}
+ols_intercept <- model$estimate[1]
+ols_slope     <- model$estimate[2]
+```
+```{r}
+cat("Intercept of",
+    round(ols_intercept, 3),
+    "and slope of",
+    round(ols_slope, 3),
+    "\n")
+```
+
+
+```{r ols_plot}
+# Plot of these with the OLS solution
+ggplot(d, aes(x, y)) +
+  geom_point(size = 3) +
+  geom_abline(intercept = ols_intercept, 
+              slope = ols_slope,
+              size = 2) +
+  ggtitle("Some data with an OLS regression line") +
+  scale_y_continuous(limits = c(0, max(d$y)))
+```
+
+
+```{r many_slopes}
+slope_guesses <- tibble(slope = c(1, 3, 5, 7, 10))
+
+ggplot(d, aes(x, y)) +
+  geom_abline(
+    aes(
+      intercept = ols_intercept,
+      slope = slope,
+      color = factor(slope)
+    ),
+    data = slope_guesses,
+    size = 2
+  ) +
+  geom_point(size = 3) +
+  ggtitle(glue("Some data with lines of same intercept and different slopes")) +
+  labs(color = "Slope") +
+  scale_color_brewer(palette = 3) +
+  scale_y_continuous(limits = c(0, max(d$y)))
+```
+
+```{r}
+# slope_guesses <- tibble(b = c(1, 7))
+# 
+# d %>%
+#   mutate(predicted_y1 = ols_intercept + slope_guesses$b[1] * x,
+#          predicted_y2 = ols_intercept + slope_guesses$b[2] * x) %>%
+#   ggplot(aes(x, y)) +
+#   geom_segment(aes(xend = x, yend = predicted_y1),
+#                color = "red",
+#                size = 1.5) +
+#   geom_segment(aes(xend = x, yend = predicted_y2),
+#                color = "purple",
+#                size = 1.5) +
+#   geom_point(size = 3) +
+#   geom_abline(aes(intercept = ols_intercept,
+#               slope = b),
+#               data = slope_guesses,
+#               size = 2) +
+#   ggtitle(glue("Squared errors using a line of slope {slope_guess}")) +
+#   scale_x_continuous(expand = c(0, 1))
+```
+
+
+```{r residual_plot}
+slope_guess <- 1
+
+d %>%
+  mutate(predicted_y = ols_intercept + slope_guess * x) %>%
+  ggplot(aes(x, y)) +
+  geom_segment(aes(xend = x, yend = predicted_y),
+               color = "red",
+               size = 1.5) +
+  # geom_text(aes(
+  #   label = glue(
+  #     "({y} - {round(predicted_y,1)}) squared = {round((y-predicted_y)^2,1)}"
+  #   )
+  # ),
+  # nudge_y = 1) +
+  geom_point(size = 3) +
+  geom_abline(intercept = ols_intercept,
+              slope = slope_guess,
+              size = 2) +
+  ggtitle(glue("Errors with a line of slope {slope_guess}")) +
+  scale_x_continuous(expand = c(0, 1))
+```
+
+The red lines are how wrong we are, and these values squared are shown in the plot (remember, we square them as some might be negative).
+
+
+OK, another way to see this is the actual data:
+
+```{r}
+# Calculating the squared errors for a slope of 1
+slope_guess <-  1
+
+d %>%
+  mutate(predicted_y = ols_intercept + slope_guess * x) %>% 
+  mutate(error = y - predicted_y) %>% 
+  mutate(squared_error = error^2)
+```
+```{r}
+# Summing the squared error gives:
+d %>%
+  mutate(predicted_y = ols_intercept + slope_guess * x) %>% 
+  mutate(error = y - predicted_y) %>% 
+  mutate(squared_error = error^2) %>% 
+  summarise(sse = sum(squared_error))
+```
+
+So we can now do this for a bunch of slopes. Let's try 1 to 10.
+
+```{r}
+# Function to add predicted y to data with x and y
+add_predicted_y <- function(df, intercept, slope) {
+  mutate(df, predicted_y = intercept + slope * x)
+}
+
+# Quick function to get sum of squared errors (sse) from the data
+sse <- function(y, predicted_y) {
+  squared_errors <- (y - predicted_y)^2
+  sum(squared_errors)
+}
+```
+```{r}
+# Compute Sum of Squared Errors (sse) for each slope
+slope_tests <- tibble(slope_guess = c(1, 3, 5, 7, 10)) %>%
+  mutate(sse = map_dbl(
+    slope_guess, 
+    ~ add_predicted_y(d, ols_intercept, .) %>% 
+      summarise(sse = sse(y, predicted_y)) %>% 
+      pull(sse)
+  ))
+```
+```{r}
+slope_tests
+```
+
+Plot the results
+
+```{r sse_per_slope_test}
+slope_tests %>%
+  ggplot(aes(slope_guess, sse)) +
+  geom_line(size = 2) +
+  geom_point(size = 4, color = "purple") +
+  geom_label(aes(label = round(sse, 2)),
+             nudge_y = 10) +
+  labs(x = "Slope guess", y = "Sum of Squared Errors") +
+  ggtitle("How much of a mistake do we make with different slopes?") +
+  scale_x_continuous(breaks = slope_tests$slope_guess)
+```
+
+# Finding the gradient
+
+```{r}
+d %>%
+  mutate(predicted_y = ols_intercept + slope_guess * x) %>% 
+  mutate(error = y - predicted_y) %>% 
+  mutate(squared_error = error^2)
+```
+
+```{r}
+# Derivative where slope = 1
+sum( -2 * d$x * (d$y - ( 0.167 + 1 * d$x) ) )
+```
+
+```{r}
+many_slope_tests <- tibble(slope_guess = seq(-1, 11)) %>%
+  mutate(sse = map_dbl(
+    slope_guess, 
+    ~ add_predicted_y(d, ols_intercept, .) %>% 
+      summarise(sse = sse(y, predicted_y)) %>% 
+      pull(sse)
+  ))
+```
+
+```{r derivative_viz_1}
+demo_slope <- 1
+derivative_at_slope <- sum( -2 * d$x * (d$y - ( 0.167 + demo_slope * d$x) ) )
+error_at_slope <- many_slope_tests$sse[many_slope_tests$slope_guess == demo_slope]
+derivative_intercept <- error_at_slope - derivative_at_slope * demo_slope
+
+many_slope_tests %>%
+  ggplot(aes(slope_guess, sse)) +
+  geom_line(size = 2) +
+  geom_abline(intercept = derivative_intercept,
+              slope = derivative_at_slope,
+              color = "purple") +
+  geom_point(x = demo_slope, y = error_at_slope,
+             size = 5, color = "purple") +
+  labs(x = "Slope", y = "Sum of Squared Errors") +
+  ggtitle(glue("Demonstrating the derivative with a slope of {demo_slope}")) +
+  scale_x_continuous(breaks = many_slope_tests$slope_guess)
+```
+```{r}
+demo_slope <- 9
+derivative_at_slope <- sum( -2 * d$x * (d$y - ( 0.167 + demo_slope * d$x) ) )
+error_at_slope <- many_slope_tests$sse[many_slope_tests$slope_guess == demo_slope]
+derivative_intercept <- error_at_slope - derivative_at_slope * demo_slope
+derivative_at_slope
+```
+```{r derivative_viz_9}
+many_slope_tests %>%
+  ggplot(aes(slope_guess, sse)) +
+  geom_line(size = 2) +
+  geom_abline(intercept = derivative_intercept,
+              slope = derivative_at_slope,
+              color = "blue") +
+  geom_point(x = demo_slope, y = error_at_slope,
+             size = 5, color = "blue") +
+  labs(x = "Slope", y = "Sum of Squared Errors") +
+  ggtitle(glue("Demonstrating the derivative with a slope of {demo_slope}")) +
+  scale_x_continuous(breaks = many_slope_tests$slope_guess)
+```
+
+# Traversing the Gradient
+
+```{r}
+# Setup
+initial_slope <- 1
+learning_rate <- .08
+steps_df <- tibble(step = seq_len(5), slope = NA)
+current_slope <- initial_slope
+
+# For each step...
+for (step in steps_df$step) {
+  # Store the current slope value
+  steps_df$slope[step] <- current_slope
+  
+  # Calculate the derivative of the loss
+  derivative <- sum(-2 * d$x * (d$y - (0.167 + current_slope * d$x)))
+  
+  # Update the slope value based on the derivative and learning rate
+  current_slope <- current_slope - learning_rate * derivative
+}
+
+steps_df
+```
+```{r steps_demo}
+steps_df_with_error <- steps_df %>% 
+  mutate(sse = map_dbl(
+    slope, 
+    ~ add_predicted_y(d, ols_intercept, .) %>% 
+      summarise(sse = sse(y, predicted_y)) %>% 
+      pull(sse)
+  ))
+
+many_slope_tests %>%
+  filter(between(slope_guess, 0, 7)) %>% 
+  ggplot(aes(slope_guess, sse)) +
+  geom_line(size = 2) +
+  geom_point(aes(x = slope, y = sse, color = factor(step)),
+             data = steps_df_with_error,
+             size = 5, alpha = .9) +
+  labs(x = "Slope", y = "Sum of Squared Errors", color = "Step") +
+  ggtitle(glue("Taking {nrow(steps_df)} steps from a slope of {initial_slope}")) +
+  scale_x_continuous(breaks = many_slope_tests$slope_guess) +
+  scale_color_brewer(palette = 3)
+```
+
+
+# Putting the pieces together
+
+```{r}
+# Simulate a larger data set
+more_d <- tibble(x = rnorm(100),
+                 y = .6 * x + rnorm(100) + 5)
+```
+```{r}
+more_d %>% 
+  ggplot(aes(x, y)) +
+    geom_point()
+```
+
+```{r}
+more_d_model <- lm(y ~ x, more_d) %>% tidy()
+more_d_model
+```
+```{r}
+more_d_ols_intercept <- more_d_model$estimate[1]
+more_d_ols_slope     <- more_d_model$estimate[2]
+```
+
+
+```{r}
+# Hyperparameters
+initial_slope   <- 1
+learning_rate   <- .001
+minimum_step    <- .0001
+maximimum_steps <- 1000
+
+# Values to track
+slope <- initial_slope
+step  <- Inf
+steps <- 0
+
+# Run Gradient Descent until stopping criterion reached
+while((steps < maximimum_steps) && (abs(step) > minimum_step)) {
+  derivative <- sum( -2 * more_d$x * (more_d$y - ( more_d_ols_intercept + slope * more_d$x) ) )
+  step  <- learning_rate * derivative
+  steps <- steps + 1
+  slope <- slope - step
+}
+```
+```{r}
+glue("OLS slope: {round(more_d_ols_slope, 3)}",
+     "Gradient Descent slope: {round(slope, 3)}",
+     "Number of steps: {steps}",
+     .sep = "\n")
+```
+
+# More than one parameter?
+
+```{r eval = FALSE}
+# Derivative of the slope
+sum( -2 * x * (y - ( intercept + slope * x) ) )
+
+# Derivative of the intercept
+sum( -2 * (y - ( intercept + slope * x) ) )
+```
+```{r}
+# Functions to compute derivatives
+get_slope_derivative <- function(x, y, intercept, slope) {
+  sum( -2 * x * (y - ( intercept + slope * x) ) )
+}
+
+get_intercept_derivative <- function(x, y, intercept, slope) {
+  sum( -2 * (y - ( intercept + slope * x) ) )
+}
+```
+
+```{r}
+# Hyperparameters
+initial_intercept <- 0
+initial_slope     <- 1
+learning_rate     <- .001
+minimum_step      <- .0001
+maximimum_steps   <- 1000
+
+# Values to track
+intercept      <- initial_intercept
+slope          <- initial_slope
+intercept_step <- Inf
+slope_step     <- Inf
+steps          <- 0
+
+# Run Gradient Descent until stopping criterion reached
+while((steps < maximimum_steps) && (max(abs(intercept_step), abs(slope_step)) > minimum_step)) {
+  
+  # Handle intercept
+  intercept_derivative <- get_intercept_derivative(
+    more_d$x,
+    more_d$y,
+    intercept,
+    slope
+  )
+  intercept_step <- learning_rate * intercept_derivative
+  intercept <- intercept - intercept_step
+  
+  # Handle slope
+  slope_derivative <- get_slope_derivative(
+    more_d$x,
+    more_d$y,
+    intercept,
+    slope
+  )
+  slope_step <- learning_rate * slope_derivative
+  slope <- slope - slope_step
+  
+  # Increment step
+  steps <- steps + 1
+}
+```
+```{r}
+glue("OLS intercept: {round(more_d_ols_intercept, 3)}",
+     "OLS slope: {round(more_d_ols_slope, 3)}",
+     "Gradient Descent intercept: {round(intercept, 3)}",
+     "Gradient Descent slope: {round(slope, 3)}",
+     "Number of steps: {steps}",
+     .sep = "\n")
+```
