@@ -1,6 +1,6 @@
 # Learn Gradient Descent (with code)
 
-A repo containing the full code for a blog on Medium.
+Code for a Medium blog post
 
 ## Repo notes
 
